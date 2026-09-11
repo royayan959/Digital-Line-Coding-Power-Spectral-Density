@@ -1,0 +1,658 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import welch
+
+# ============================================================
+# EXPERIMENT 6
+# Digital Line Coding and Power Spectral Density
+# ============================================================
+
+# ------------------------------------------------------------
+# 1. PARAMETERS
+# ------------------------------------------------------------
+
+# Common 8-bit sequence
+bits = np.array([1, 0, 1, 1, 0, 0, 1, 0])
+
+# Signal amplitude
+A = 1.0
+
+# Samples per bit
+Ns = 100
+
+# Bit rate
+Rb = 1.0
+
+# Sampling frequency
+Fs = Rb * Ns
+
+Nbits = len(bits)
+
+# Time axis
+t = np.arange(Nbits * Ns) / Fs
+
+
+# ============================================================
+# 2. MANUAL LINE-CODE ENCODERS
+#    No toolbox line-code encoders are used.
+# ============================================================
+
+# ------------------------------------------------------------
+# UNIPOLAR NRZ
+# 1 = +A
+# 0 = 0
+# ------------------------------------------------------------
+
+def unipolar_nrz(bits, Ns, A=1.0):
+
+    return np.repeat(bits.astype(float) * A, Ns)
+
+
+# ------------------------------------------------------------
+# POLAR NRZ-L
+# 1 = +A
+# 0 = -A
+# ------------------------------------------------------------
+
+def polar_nrz_l(bits, Ns, A=1.0):
+
+    levels = np.where(bits == 1, A, -A)
+
+    return np.repeat(levels, Ns)
+
+
+# ------------------------------------------------------------
+# POLAR RZ
+#
+# 1 = +A for first half of bit, then 0
+# 0 = -A for first half of bit, then 0
+# ------------------------------------------------------------
+
+def polar_rz(bits, Ns, A=1.0):
+
+    x = np.zeros(len(bits) * Ns)
+
+    half = Ns // 2
+
+    for k, b in enumerate(bits):
+
+        start = k * Ns
+        middle = start + half
+
+        if b == 1:
+            x[start:middle] = A
+        else:
+            x[start:middle] = -A
+
+    return x
+
+
+# ------------------------------------------------------------
+# MANCHESTER
+#
+# Convention used:
+# 1 = -A -> +A
+# 0 = +A -> -A
+#
+# Every bit has a middle transition.
+# ------------------------------------------------------------
+
+def manchester(bits, Ns, A=1.0):
+
+    x = np.zeros(len(bits) * Ns)
+
+    half = Ns // 2
+
+    for k, b in enumerate(bits):
+
+        start = k * Ns
+        middle = start + half
+        end = (k + 1) * Ns
+
+        if b == 1:
+
+            x[start:middle] = -A
+            x[middle:end] = A
+
+        else:
+
+            x[start:middle] = A
+            x[middle:end] = -A
+
+    return x
+
+
+# ------------------------------------------------------------
+# DIFFERENTIAL MANCHESTER
+#
+# Convention used:
+#
+# 0 = transition at beginning of bit
+# 1 = no transition at beginning
+#
+# There is ALWAYS a transition at the middle of each bit.
+# ------------------------------------------------------------
+
+def differential_manchester(bits, Ns, A=1.0):
+
+    x = np.zeros(len(bits) * Ns)
+
+    half = Ns // 2
+
+    level = A
+
+    for k, b in enumerate(bits):
+
+        start = k * Ns
+        middle = start + half
+        end = (k + 1) * Ns
+
+        # Transition at beginning for bit 0
+        if b == 0:
+
+            level = -level
+
+        # First half
+        x[start:middle] = level
+
+        # Mandatory middle transition
+        level = -level
+
+        # Second half
+        x[middle:end] = level
+
+    return x
+
+
+# ------------------------------------------------------------
+# AMI
+#
+# 0 = 0
+# Successive 1s alternate between +A and -A
+# ------------------------------------------------------------
+
+def ami(bits, Ns, A=1.0):
+
+    x = np.zeros(len(bits) * Ns)
+
+    last_polarity = -A
+
+    for k, b in enumerate(bits):
+
+        if b == 1:
+
+            last_polarity = -last_polarity
+
+            x[k * Ns:(k + 1) * Ns] = last_polarity
+
+        else:
+
+            x[k * Ns:(k + 1) * Ns] = 0
+
+    return x
+
+
+# ============================================================
+# 3. GENERATE ALL SIX LINE CODES
+# ============================================================
+
+signals = {
+
+    "Unipolar NRZ":
+        unipolar_nrz(bits, Ns, A),
+
+    "Polar NRZ-L":
+        polar_nrz_l(bits, Ns, A),
+
+    "Polar RZ":
+        polar_rz(bits, Ns, A),
+
+    "Manchester":
+        manchester(bits, Ns, A),
+
+    "Differential Manchester":
+        differential_manchester(bits, Ns, A),
+
+    "AMI":
+        ami(bits, Ns, A)
+}
+
+
+# ============================================================
+# 4. DISPLAY BIT SEQUENCE
+# ============================================================
+
+print("\n========================================")
+print("EXPERIMENT 6")
+print("DIGITAL LINE CODING AND PSD")
+print("========================================")
+
+print("\nBit sequence:")
+
+print(" ".join(map(str, bits)))
+
+
+# ============================================================
+# 5. PLOT SIX LINE-CODE WAVEFORMS
+# ============================================================
+
+plt.figure(figsize=(12, 10))
+
+for i, (name, signal) in enumerate(signals.items()):
+
+    plt.subplot(6, 1, i + 1)
+
+    plt.step(
+        t,
+        signal,
+        where="post",
+        linewidth=1.5
+    )
+
+    plt.axhline(
+        0,
+        linewidth=0.7
+    )
+
+    plt.ylim(-1.5, 1.5)
+
+    plt.yticks([-1, 0, 1])
+
+    plt.ylabel(name)
+
+    plt.grid(True, alpha=0.3)
+
+plt.xlabel("Time (bit periods)")
+
+plt.suptitle(
+    "Six Digital Line Codes for Bit Sequence 10110010",
+    fontsize=14,
+    fontweight="bold"
+)
+
+plt.tight_layout()
+
+plt.show()
+
+
+# ============================================================
+# 6. WELCH POWER SPECTRAL DENSITY
+# ============================================================
+
+print("\nCalculating Welch PSD...")
+
+
+# To obtain a stable Welch estimate while keeping the
+# SAME DATA PATTERN for all codes, repeat the 8-bit word.
+
+psd_bits = np.tile(bits, 128)
+
+
+# Generate long signals
+
+psd_signals = {
+
+    "Unipolar NRZ":
+        unipolar_nrz(psd_bits, Ns, A),
+
+    "Polar NRZ-L":
+        polar_nrz_l(psd_bits, Ns, A),
+
+    "Polar RZ":
+        polar_rz(psd_bits, Ns, A),
+
+    "Manchester":
+        manchester(psd_bits, Ns, A),
+
+    "Differential Manchester":
+        differential_manchester(psd_bits, Ns, A),
+
+    "AMI":
+        ami(psd_bits, Ns, A)
+}
+
+
+# Plot PSD
+
+plt.figure(figsize=(12, 7))
+
+for name, signal in psd_signals.items():
+
+    f, Pxx = welch(
+
+        signal,
+
+        fs=Fs,
+
+        window="hann",
+
+        nperseg=1024,
+
+        noverlap=512,
+
+        nfft=4096,
+
+        detrend=False,
+
+        return_onesided=False,
+
+        scaling="density"
+    )
+
+
+    # Normalize PSD
+
+    Pxx_normalized = Pxx / np.max(Pxx)
+
+
+    # Convert to dB
+
+    Pxx_dB = 10 * np.log10(
+        Pxx_normalized + 1e-12
+    )
+
+
+    # Sort frequency values for plotting
+
+    order = np.argsort(f)
+
+    f_sorted = f[order]
+
+    Pxx_sorted = Pxx_dB[order]
+
+
+    plt.plot(
+
+        f_sorted / Rb,
+
+        Pxx_sorted,
+
+        linewidth=1.3,
+
+        label=name
+    )
+
+
+plt.xlabel("Normalized Frequency (f / Rb)")
+
+plt.ylabel("Normalized PSD (dB)")
+
+plt.title(
+    "Normalized Power Spectral Density Using Welch's Method"
+)
+
+plt.xlim(-2, 2)
+
+plt.ylim(-65, 5)
+
+plt.grid(True, alpha=0.3)
+
+plt.legend()
+
+plt.tight_layout()
+
+plt.show()
+
+
+# ============================================================
+# 7. DC COMPONENT / AVERAGE SIGNAL LEVEL
+# ============================================================
+
+print("\n========================================")
+print("DC COMPONENT / AVERAGE LEVEL")
+print("========================================")
+
+average_levels = {}
+
+for name, signal in signals.items():
+
+    average = np.mean(signal)
+
+    average_levels[name] = average
+
+    print(
+        f"{name:25s} = {average:+.4f}"
+    )
+
+
+# ============================================================
+# 8. RUNNING DIGITAL SUM
+# ============================================================
+
+print("\n========================================")
+print("RUNNING DIGITAL SUM")
+print("========================================")
+
+
+rds_values = {}
+
+
+for name, signal in signals.items():
+
+    bit_means = []
+
+    for k in range(Nbits):
+
+        start = k * Ns
+
+        end = (k + 1) * Ns
+
+        mean_value = np.mean(
+            signal[start:end]
+        )
+
+        bit_means.append(mean_value)
+
+
+    bit_means = np.array(bit_means)
+
+    RDS = np.cumsum(bit_means)
+
+    rds_values[name] = RDS
+
+
+    print(
+        f"{name:25s} Final RDS = {RDS[-1]:+.4f}"
+    )
+
+
+# ============================================================
+# 9. PLOT RUNNING DIGITAL SUM
+# ============================================================
+
+plt.figure(figsize=(12, 7))
+
+for name, RDS in rds_values.items():
+
+    plt.step(
+
+        np.arange(1, Nbits + 1),
+
+        RDS,
+
+        where="mid",
+
+        linewidth=1.5,
+
+        label=name
+    )
+
+
+plt.axhline(
+    0,
+    linewidth=0.7
+)
+
+plt.xlabel("Bit Number")
+
+plt.ylabel("Running Digital Sum")
+
+plt.title(
+    "Running Digital Sum for 10110010"
+)
+
+plt.grid(True, alpha=0.3)
+
+plt.legend()
+
+plt.tight_layout()
+
+plt.show()
+
+
+# ============================================================
+# 10. LONG-RUN IDENTICAL-BIT TEST
+# ============================================================
+
+print("\n========================================")
+print("LONG-RUN TEST")
+print("32 IDENTICAL ZEROS")
+print("========================================")
+
+
+long_bits = np.zeros(
+    32,
+    dtype=int
+)
+
+
+long_signals = {
+
+    "Unipolar NRZ":
+        unipolar_nrz(long_bits, Ns, A),
+
+    "Polar NRZ-L":
+        polar_nrz_l(long_bits, Ns, A),
+
+    "Polar RZ":
+        polar_rz(long_bits, Ns, A),
+
+    "Manchester":
+        manchester(long_bits, Ns, A),
+
+    "Differential Manchester":
+        differential_manchester(long_bits, Ns, A),
+
+    "AMI":
+        ami(long_bits, Ns, A)
+}
+
+
+long_t = np.arange(
+    len(long_bits) * Ns
+) / Fs
+
+
+plt.figure(figsize=(12, 10))
+
+
+for i, (name, signal) in enumerate(
+    long_signals.items()
+):
+
+    plt.subplot(6, 1, i + 1)
+
+    plt.step(
+
+        long_t,
+
+        signal,
+
+        where="post",
+
+        linewidth=1.4
+    )
+
+    plt.axhline(
+        0,
+        linewidth=0.7
+    )
+
+    plt.ylim(-1.5, 1.5)
+
+    plt.yticks([-1, 0, 1])
+
+    plt.ylabel(name)
+
+    plt.grid(True, alpha=0.3)
+
+
+plt.xlabel("Time (bit periods)")
+
+plt.suptitle(
+    "Long-Run Test: 32 Identical Zeros",
+    fontsize=14,
+    fontweight="bold"
+)
+
+plt.tight_layout()
+
+plt.show()
+
+
+# ============================================================
+# 11. FINAL COMPARISON TABLE
+# ============================================================
+
+print("\n========================================")
+print("LINE CODE COMPARISON")
+print("========================================")
+
+print(
+    "\nCode                    DC          Bandwidth       Polarity        Self-clocking"
+)
+
+print(
+    "--------------------------------------------------------------------------------------"
+)
+
+print(
+    "Unipolar NRZ            High        Low             Unipolar        Poor"
+)
+
+print(
+    "Polar NRZ-L             Data        Low             Bipolar         Poor"
+)
+
+print(
+    "Polar RZ                Data        Higher          Bipolar         Better"
+)
+
+print(
+    "Manchester              ~Zero       High            Bipolar         Excellent"
+)
+
+print(
+    "Differential Manchester ~Zero       High            Differential    Excellent"
+)
+
+print(
+    "AMI                     ~Zero       Moderate        Bipolar         Limited"
+)
+
+
+# ============================================================
+# 12. FINAL RESULTS
+# ============================================================
+
+print("\n========================================")
+print("EXPERIMENT COMPLETED")
+print("========================================")
+
+print("\nAverage DC levels:")
+
+for name, value in average_levels.items():
+
+    print(
+        f"{name:25s}: {value:+.4f}"
+    )
+
+print("\nAll six line codes were generated manually.")
+
+print("Welch PSD estimation completed.")
+
+print("Running digital sum calculated.")
+
+print("Long-run identical-bit test completed.")
+
+print("\nExperiment finished successfully.")
